@@ -1,0 +1,15 @@
+.*/
+*.bin
+*.gz
+*.ipynb
+*.pyc
+*.tar
+*.zip
+
+.env
+__pycache__/
+build/
+data/
+dist/
+runs/
+*.egg-info/
