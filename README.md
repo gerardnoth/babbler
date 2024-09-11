@@ -153,3 +153,7 @@ IDE
 ### PyCharm
 
 [PyCharm](https://www.jetbrains.com/pycharm/) may need to be configured before it correctly detects the project. Right-click on `src`, then under `Mark directory as`, select `Sources Root`. Restart the IDE and it should work. If it doesn't, follow the steps under `Main Menu > File > Repair IDE`.
+
+Recommended plugins:
+
+- [Pydantic](https://docs.pydantic.dev/latest/integrations/pycharm/): Better support for Pydantic.
