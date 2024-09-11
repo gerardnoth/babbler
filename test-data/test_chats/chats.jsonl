@@ -1,2 +1,2 @@
-{"messages": [{"role": "system", "content":  "System message 1"}, {"role": "user", "content": "User message 1"}]}
-{"messages": [{"role": "system", "content":  "System message 2"}, {"role": "user", "content": "User message 2"}]}
+{"system_message": "System message 1", "messages": [{"role": "user", "content": "User message 1"}]}
+{"system_message": "System message 2", "messages": [{"role": "user", "content": "User message 2"}]}

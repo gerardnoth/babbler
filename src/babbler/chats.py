@@ -2,6 +2,7 @@
 
 import os
 from abc import ABC, abstractmethod
+from enum import Enum
 from os import PathLike
 from pathlib import Path
 from typing import Optional
@@ -11,7 +12,14 @@ import dotenv
 import google.generativeai as genai
 import openai
 import typer
+from google.generativeai.types import ContentsType, ContentDict
 from loguru import logger
+from openai.types.chat import (
+    ChatCompletionMessageParam,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionUserMessageParam,
+)
 from pydantic import Field
 from tqdm import tqdm
 from typing_extensions import Annotated
@@ -19,10 +27,20 @@ from typing_extensions import Annotated
 from babbler.resources import JsonModel, Provider
 
 
+class Role(str, Enum):
+    """The role of an entity in a conversation."""
+
+    assistant = 'assistant'
+    """A role the model adopts."""
+
+    user = 'user'
+    """A role the for entities external to the model, such as a user or agent."""
+
+
 class Message(JsonModel):
     """A message in a conversation with a generative model."""
 
-    role: str
+    role: Role
     content: str
 
 
@@ -88,38 +106,60 @@ class OpenAiChatCompleter(ChatCompleter):
         :param chat: A chat to complete.
         :return: A Completion object.
         """
-        messages = []
+        messages: list[ChatCompletionMessageParam] = []
         if chat.system_message:
             messages.append(
-                {
-                    'role': 'system',
-                    'content': chat.system_message,
-                }
+                ChatCompletionSystemMessageParam(
+                    role='system',
+                    content=chat.system_message,
+                )
             )
-        for msg in chat.messages:
-            messages.append(
-                {
-                    'role': msg.role,
-                    'content': msg.content,
-                }
+        for message in chat.messages:
+            created = OpenAiChatCompleter.create_message(message)
+            messages.append(created)
+        model_name = chat.model or self.model
+        if model_name is None:
+            raise ValueError(
+                f'A default model must be set if the chat does not have a model set: {chat}'
             )
-        temperature = openai.NOT_GIVEN if chat.temperature is None else chat.temperature
         chat_completion = self.client.chat.completions.create(
-            model=chat.model or self.model,
-            messages=messages,  # type: ignore
-            temperature=temperature,
+            model=model_name,
+            messages=messages,
+            temperature=chat.temperature,
             n=1,
         )
         # Because "n = 1" only one choice is generated.
         choice = chat_completion.choices[0]
         message = Message(
-            role=choice.message.role,
-            content=choice.message.content,
+            role=Role.assistant,
+            content=choice.message.content or '',
         )
         return Completion(
             key=chat.key,
             message=message,
         )
+
+    @staticmethod
+    def create_message(message: Message) -> ChatCompletionMessageParam:
+        """Create a message in a format for the provider.
+
+        :param message: Input to map.
+        :return: A new message.
+        """
+        role = message.role
+        match role:
+            case 'assistant':
+                return ChatCompletionAssistantMessageParam(
+                    role='assistant',
+                    content=message.content,
+                )
+            case 'user':
+                return ChatCompletionUserMessageParam(
+                    role='user',
+                    content=message.content,
+                )
+            case _:
+                raise ValueError(f'Unrecognized role {role}')
 
 
 class GoogleChatCompleter(ChatCompleter):
@@ -154,15 +194,20 @@ class GoogleChatCompleter(ChatCompleter):
         :return: A Completion object.
         """
         # See: https://ai.google.dev/gemini-api/docs/text-generation?lang=python
+        model_name = chat.model or self.model
+        if model_name is None:
+            raise ValueError(
+                f'A default model must be set if the chat does not have a model set: {chat}'
+            )
         model = genai.GenerativeModel(
-            model_name=chat.model or self.model,
+            model_name=model_name,
             system_instruction=chat.system_message,
         )
-        contents = []
         generation_config = genai.types.GenerationConfig(
             candidate_count=1,
             temperature=chat.temperature,
         )
+        contents: list[ContentsType] = []
         for msg in chat.messages:
             contents.append(
                 {
@@ -185,6 +230,29 @@ class GoogleChatCompleter(ChatCompleter):
             key=chat.key,
             message=message,
         )
+
+    @staticmethod
+    def create_message(message: Message) -> ContentDict:
+        """Create a message in a format for the provider.
+
+        :param message: Input to map.
+        :return: A new message.
+        """
+        role = message.role
+        parts = [message.content]
+        match role:
+            case 'assistant':
+                return ContentDict(
+                    role='model',
+                    parts=parts,
+                )
+            case 'user':
+                return ContentDict(
+                    role='user',
+                    parts=parts,
+                )
+            case _:
+                raise ValueError(f'Unrecognized role {role}')
 
 
 def complete(
