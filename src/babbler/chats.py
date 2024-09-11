@@ -348,7 +348,7 @@ def _find_keys(path: PathLike) -> set[str]:
             no_keys += 1
     if no_keys > 0:
         logger.warning(
-            'The output file contains completions without keys. ' f'Total missing keys: {no_keys}'
+            f'The output file contains completions without keys. Total missing keys: {no_keys}'
         )
     logger.debug(f'Total completions that will be skipped: {len(keys)}')
     return keys
