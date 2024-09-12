@@ -18,4 +18,4 @@ test:
 
 # Type check the source code.
 typecheck:
-	.venv/bin/mypy src
+	.venv/bin/mypy src --enable-incomplete-feature=NewGenericSyntax
