@@ -2,6 +2,7 @@
 
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from enum import Enum
 from os import PathLike
 from pathlib import Path
@@ -12,7 +13,7 @@ import dotenv
 import google.generativeai as genai
 import openai
 import typer
-from google.generativeai.types import ContentsType, ContentDict
+from google.generativeai.types import ContentDict
 from loguru import logger
 from openai.types.chat import (
     ChatCompletionMessageParam,
@@ -32,6 +33,9 @@ class Role(str, Enum):
 
     assistant = 'assistant'
     """A role the model adopts."""
+
+    system = 'system'
+    """A role for system instructions."""
 
     user = 'user'
     """A role the for entities external to the model, such as a user or agent."""
@@ -59,6 +63,75 @@ class Completion(JsonModel):
 
     key: str | None
     message: Message
+
+
+class ChatAdapter[T](ABC):
+    """Converts chats into a format suitable for a model provider."""
+
+    @abstractmethod
+    def adapt_message(self, message: Message) -> T:
+        """Adapt a message for a provider.
+
+        :param message: A message to adapt.
+        :return: An object in a provider format.
+        """
+        raise NotImplementedError
+
+    def adapt_messages(self, messages: Iterable[Message]) -> list[T]:
+        """Adapt messages for a provider.
+
+        :param messages: Messages to adapt.
+        :return: Objects in a provider format.
+        """
+        return [self.adapt_message(message) for message in messages]
+
+
+class GoogleAIChatAdapter(ChatAdapter[ContentDict]):
+    """Adapts chats for Google AI."""
+
+    @override
+    def adapt_message(self, message: Message) -> ContentDict:
+        role = message.role
+        parts = [message.content]
+        match role:
+            case 'assistant':
+                return ContentDict(
+                    role='model',
+                    parts=parts,
+                )
+            case 'user':
+                return ContentDict(
+                    role='user',
+                    parts=parts,
+                )
+            case _:
+                raise ValueError(f'Unsupported role {role}')
+
+
+class OpenAIChatAdapter(ChatAdapter[ChatCompletionMessageParam]):
+    """Adapts chats for OpenAI."""
+
+    @override
+    def adapt_message(self, message: Message) -> ChatCompletionMessageParam:
+        role = message.role
+        match role:
+            case Role.assistant:
+                return ChatCompletionAssistantMessageParam(
+                    role='assistant',
+                    content=message.content,
+                )
+            case Role.system:
+                return ChatCompletionSystemMessageParam(
+                    role='system',
+                    content=message.content,
+                )
+            case Role.user:
+                return ChatCompletionUserMessageParam(
+                    role='user',
+                    content=message.content,
+                )
+            case _:
+                raise ValueError(f'Unsupported role {role}')
 
 
 class ChatCompleter(ABC):
@@ -98,6 +171,7 @@ class OpenAiChatCompleter(ChatCompleter):
                 'The API key is not set. Please set the following environment variable: ' f'{name}'
             )
         self.client = openai.OpenAI(api_key=api_key)
+        self.chat_adapter = OpenAIChatAdapter()
 
     @override
     def complete(self, chat: Chat) -> Completion:
@@ -109,14 +183,12 @@ class OpenAiChatCompleter(ChatCompleter):
         messages: list[ChatCompletionMessageParam] = []
         if chat.system_message:
             messages.append(
-                ChatCompletionSystemMessageParam(
-                    role='system',
-                    content=chat.system_message,
+                self.chat_adapter.adapt_message(
+                    Message(role=Role.system, content=chat.system_message)
                 )
             )
         for message in chat.messages:
-            created = OpenAiChatCompleter.create_message(message)
-            messages.append(created)
+            messages.append(self.chat_adapter.adapt_message(message))
         model_name = chat.model or self.model
         if model_name is None:
             raise ValueError(
@@ -138,28 +210,6 @@ class OpenAiChatCompleter(ChatCompleter):
             key=chat.key,
             message=message,
         )
-
-    @staticmethod
-    def create_message(message: Message) -> ChatCompletionMessageParam:
-        """Create a message in a format for the provider.
-
-        :param message: Input to map.
-        :return: A new message.
-        """
-        role = message.role
-        match role:
-            case 'assistant':
-                return ChatCompletionAssistantMessageParam(
-                    role='assistant',
-                    content=message.content,
-                )
-            case 'user':
-                return ChatCompletionUserMessageParam(
-                    role='user',
-                    content=message.content,
-                )
-            case _:
-                raise ValueError(f'Unrecognized role {role}')
 
 
 class GoogleChatCompleter(ChatCompleter):
@@ -186,6 +236,7 @@ class GoogleChatCompleter(ChatCompleter):
                 'The API key is not set. Please set the following environment variable: ' f'{name}'
             )
         genai.configure(api_key=api_key)
+        self.chat_adapter = GoogleAIChatAdapter()
 
     def complete(self, chat: Chat) -> Completion:
         """Complete a chat and return the completion.
@@ -207,14 +258,7 @@ class GoogleChatCompleter(ChatCompleter):
             candidate_count=1,
             temperature=chat.temperature,
         )
-        contents: list[ContentsType] = []
-        for msg in chat.messages:
-            contents.append(
-                {
-                    'role': msg.role,
-                    'parts': msg.content,
-                }
-            )
+        contents = self.chat_adapter.adapt_messages(chat.messages)
         response = model.generate_content(
             contents=contents,
             generation_config=generation_config,
@@ -230,29 +274,6 @@ class GoogleChatCompleter(ChatCompleter):
             key=chat.key,
             message=message,
         )
-
-    @staticmethod
-    def create_message(message: Message) -> ContentDict:
-        """Create a message in a format for the provider.
-
-        :param message: Input to map.
-        :return: A new message.
-        """
-        role = message.role
-        parts = [message.content]
-        match role:
-            case 'assistant':
-                return ContentDict(
-                    role='model',
-                    parts=parts,
-                )
-            case 'user':
-                return ContentDict(
-                    role='user',
-                    parts=parts,
-                )
-            case _:
-                raise ValueError(f'Unrecognized role {role}')
 
 
 def complete(
