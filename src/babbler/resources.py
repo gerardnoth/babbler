@@ -13,6 +13,16 @@ class JsonModel(BaseModel):
     """An extension of a Pydantic BaseModel with additional JSON methods."""
 
     @classmethod
+    def from_json(cls, path: PathLike) -> Self:
+        """Create an instance from a JSON file.
+
+        :param path: Path to a JSON file.
+        :return: A new instance.
+        """
+        with open(path, encoding='utf-8') as file:
+            return cls.model_validate_json(file.read())
+
+    @classmethod
     def from_jsonl(cls, path: PathLike) -> list[Self]:
         """Reads objects from a JSONL file and returns them as a list.
 
