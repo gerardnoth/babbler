@@ -58,13 +58,6 @@ class Chat(JsonModel):
     messages: list[Message] = Field(default_factory=list)
 
 
-class Completion(JsonModel):
-    """A completion from a generative model."""
-
-    key: str | None
-    message: Message
-
-
 class ChatAdapter[T](ABC):
     """Converts chats into a format suitable for a model provider."""
 
@@ -138,7 +131,7 @@ class ChatCompleter(ABC):
     """A base class for completing chats."""
 
     @abstractmethod
-    def complete(self, chat: Chat) -> Completion:
+    def complete(self, chat: Chat) -> Message:
         """Complete a chat and return the completion.
 
         :param chat: A chat to complete.
@@ -174,7 +167,7 @@ class OpenAiChatCompleter(ChatCompleter):
         self.chat_adapter = OpenAIChatAdapter()
 
     @override
-    def complete(self, chat: Chat) -> Completion:
+    def complete(self, chat: Chat) -> Message:
         """Complete a chat and return the completion.
 
         :param chat: A chat to complete.
@@ -202,13 +195,9 @@ class OpenAiChatCompleter(ChatCompleter):
         )
         # Because "n = 1" only one choice is generated.
         choice = chat_completion.choices[0]
-        message = Message(
+        return Message(
             role=Role.assistant,
             content=choice.message.content or '',
-        )
-        return Completion(
-            key=chat.key,
-            message=message,
         )
 
 
@@ -238,7 +227,7 @@ class GoogleChatCompleter(ChatCompleter):
         genai.configure(api_key=api_key)
         self.chat_adapter = GoogleAIChatAdapter()
 
-    def complete(self, chat: Chat) -> Completion:
+    def complete(self, chat: Chat) -> Message:
         """Complete a chat and return the completion.
 
         :param chat: A chat to complete.
@@ -266,13 +255,9 @@ class GoogleChatCompleter(ChatCompleter):
         # The candidate count is set to 1, so only 1 is available.
         content = response.candidates[0].content
         text = content.parts[0].text
-        message = Message(
+        return Message(
             role=content.role,
             content=text,
-        )
-        return Completion(
-            key=chat.key,
-            message=message,
         )
 
 
@@ -346,8 +331,9 @@ def complete(
                 continue
             if not chat.messages:
                 raise ValueError(f'No messages in chat at index {i}: {chat}')
-            completion = chat_completer.complete(chat=chat)
-            file.write(completion.model_dump_json())
+            message = chat_completer.complete(chat=chat)
+            chat.messages.append(message)
+            file.write(chat.model_dump_json())
             file.write('\n')
 
 
@@ -359,8 +345,8 @@ def _find_keys(path: PathLike) -> set[str]:
     """
     keys: set[str] = set()
     no_keys = 0
-    for completion in tqdm(Completion.yield_from_jsonl(path), desc='Reading keys'):
-        key = completion.key
+    for chat in tqdm(Chat.yield_from_jsonl(path), desc='Reading chat keys'):
+        key = chat.key
         if key:
             if key in keys:
                 logger.warning(f'Duplicate key found: {key}')
