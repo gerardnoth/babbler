@@ -1,10 +1,10 @@
 """Provides classes for completing chats with generative models."""
 
+import json
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from enum import Enum
-from os import PathLike
 from pathlib import Path
 from typing import Optional
 from typing import override
@@ -26,6 +26,7 @@ from tqdm import tqdm
 from typing_extensions import Annotated
 
 from babbler.resources import JsonModel, Provider
+from babbler.types import PathLike
 
 
 class Role(str, Enum):
@@ -62,6 +63,17 @@ class ChatAdapter[T](ABC):
     """Converts chats into a format suitable for a model provider."""
 
     @abstractmethod
+    def adapt_fine_tune(self, input_path: PathLike, output_path) -> None:
+        """Adapt a chat file for fine-tuning.
+
+        The output file is in a format suitable for the model provider.
+
+        :param input_path: A path to a chat JSONL file.
+        :param output_path: Path to save the output file.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def adapt_message(self, message: Message) -> T:
         """Adapt a message for a provider.
 
@@ -81,6 +93,10 @@ class ChatAdapter[T](ABC):
 
 class GoogleAIChatAdapter(ChatAdapter[ContentDict]):
     """Adapts chats for Google AI."""
+
+    @override
+    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
+        raise NotImplementedError
 
     @override
     def adapt_message(self, message: Message) -> ContentDict:
@@ -103,6 +119,24 @@ class GoogleAIChatAdapter(ChatAdapter[ContentDict]):
 
 class OpenAIChatAdapter(ChatAdapter[ChatCompletionMessageParam]):
     """Adapts chats for OpenAI."""
+
+    @override
+    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
+        Path(output_path).parent.mkdir(exist_ok=True, parents=True)
+        with open(output_path, 'w', encoding='utf-8') as file:
+            for chat in Chat.yield_from_jsonl(input_path):
+                messages: list[ChatCompletionMessageParam] = []
+                if chat.system_message:
+                    messages.append(
+                        ChatCompletionSystemMessageParam(
+                            role='system',
+                            content=chat.system_message,
+                        )
+                    )
+                for message in chat.messages:
+                    messages.append(self.adapt_message(message))
+                file.write(json.dumps({'messages': messages}))
+                file.write('\n')
 
     @override
     def adapt_message(self, message: Message) -> ChatCompletionMessageParam:
