@@ -1,6 +1,5 @@
 """Provides classes for completing chats with generative models."""
 
-import json
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
@@ -12,6 +11,7 @@ from typing import override
 import dotenv
 import google.generativeai as genai
 import openai
+import orjson
 import typer
 from google.generativeai.types import ContentDict
 from loguru import logger
@@ -123,7 +123,7 @@ class OpenAIChatAdapter(ChatAdapter[ChatCompletionMessageParam]):
     @override
     def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
         Path(output_path).parent.mkdir(exist_ok=True, parents=True)
-        with open(output_path, 'w', encoding='utf-8') as file:
+        with open(output_path, 'wb') as file:
             for chat in Chat.yield_from_jsonl(input_path):
                 messages: list[ChatCompletionMessageParam] = []
                 if chat.system_message:
@@ -135,8 +135,8 @@ class OpenAIChatAdapter(ChatAdapter[ChatCompletionMessageParam]):
                     )
                 for message in chat.messages:
                     messages.append(self.adapt_message(message))
-                file.write(json.dumps({'messages': messages}))
-                file.write('\n')
+                file.write(orjson.dumps({'messages': messages}))
+                file.write(b'\n')
 
     @override
     def adapt_message(self, message: Message) -> ChatCompletionMessageParam:
@@ -358,7 +358,7 @@ def complete(
         mode = 'a'
         keys = _find_keys(output_path) if resume else set()
     output_path.parent.mkdir(exist_ok=True, parents=True)
-    with open(output_path, mode) as file:
+    with open(output_path, mode, encoding='utf-8') as file:
         for i, chat in enumerate(tqdm(Chat.yield_from_jsonl(input_path), desc='Completing chats')):
             # Skip chats that already exist in the output file.
             if chat.key and chat.key in keys:
