@@ -41,6 +41,14 @@ class JsonModel(BaseModel):
         for line in babbler.files.yield_lines(path):
             yield cls.model_validate_json(line)
 
+    def write_json(self, path: PathLike) -> None:
+        """Serialize as JSON and write the result to a file.
+
+        :param path: Path to save to.
+        """
+        with open(path, 'w', encoding='utf-8') as file:
+            file.write(self.model_dump_json())
+
 
 class Provider(str, Enum):
     """Indicates supported model providers."""
