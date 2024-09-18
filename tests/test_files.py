@@ -1,5 +1,3 @@
-import json
-
 from babbler import files
 
 
@@ -16,13 +14,13 @@ def test_read_lines(tmp_path):
         assert f'{i}\n' == line
 
 
-def test_read_jsonl(tmp_path):
+def test_write_read_jsonl(tmp_path):
     path = tmp_path / 'blobs.jsonl'
     count = 3
-    with open(path, 'w', encoding='utf-8') as file:
+    with files.JSONLWriter(path) as writer:
         for i in range(count):
-            line = json.dumps({str(i): i}) + '\n'
-            file.write(line)
+            writer.write({str(i): i})
+    assert writer.file is None
 
     blobs = list(files.yield_jsonl(path))
     assert len(blobs) == count
