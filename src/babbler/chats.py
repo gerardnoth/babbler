@@ -11,7 +11,6 @@ from typing import override
 import dotenv
 import google.generativeai as genai
 import openai
-import orjson
 import typer
 from google.generativeai.types import ContentDict
 from loguru import logger
@@ -25,6 +24,7 @@ from pydantic import Field
 from tqdm import tqdm
 from typing_extensions import Annotated
 
+from babbler.files import JSONLWriter
 from babbler.resources import JsonModel, Provider
 from babbler.types import PathLike
 
@@ -96,7 +96,20 @@ class GoogleAIChatAdapter(ChatAdapter[ContentDict]):
 
     @override
     def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
-        raise NotImplementedError
+        with JSONLWriter(path=output_path) as writer:
+            for chat in Chat.yield_from_jsonl(input_path):
+                if chat.system_message:
+                    # TODO system messages are not supported yet.
+                    pass
+                if len(chat.messages) != 2:
+                    raise ValueError(
+                        f'Google AI only supports tuning single turn messages, but got chat: {chat}'
+                    )
+                example = {
+                    'text_input': chat.messages[0].content,
+                    'output': chat.messages[1].content,
+                }
+                writer.write(example)
 
     @override
     def adapt_message(self, message: Message) -> ContentDict:
@@ -122,8 +135,7 @@ class OpenAIChatAdapter(ChatAdapter[ChatCompletionMessageParam]):
 
     @override
     def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
-        Path(output_path).parent.mkdir(exist_ok=True, parents=True)
-        with open(output_path, 'wb') as file:
+        with JSONLWriter(path=output_path) as writer:
             for chat in Chat.yield_from_jsonl(input_path):
                 messages: list[ChatCompletionMessageParam] = []
                 if chat.system_message:
@@ -135,8 +147,7 @@ class OpenAIChatAdapter(ChatAdapter[ChatCompletionMessageParam]):
                     )
                 for message in chat.messages:
                     messages.append(self.adapt_message(message))
-                file.write(orjson.dumps({'messages': messages}))
-                file.write(b'\n')
+                writer.write({'messages': messages})
 
     @override
     def adapt_message(self, message: Message) -> ChatCompletionMessageParam:
@@ -352,13 +363,10 @@ def complete(
         chat_completer = OpenAiChatCompleter(model=model)
     else:
         raise ValueError(f'Unsupported provider: {provider}')
-    mode = 'w'
     keys: set[str] = set()
     if resume and output_path.exists():
-        mode = 'a'
-        keys = _find_keys(output_path) if resume else set()
-    output_path.parent.mkdir(exist_ok=True, parents=True)
-    with open(output_path, mode, encoding='utf-8') as file:
+        keys = _find_keys(output_path)
+    with JSONLWriter(path=output_path, append=resume) as writer:
         for i, chat in enumerate(tqdm(Chat.yield_from_jsonl(input_path), desc='Completing chats')):
             # Skip chats that already exist in the output file.
             if chat.key and chat.key in keys:
@@ -367,8 +375,7 @@ def complete(
                 raise ValueError(f'No messages in chat at index {i}: {chat}')
             message = chat_completer.complete(chat=chat)
             chat.messages.append(message)
-            file.write(chat.model_dump_json())
-            file.write('\n')
+            writer.write(chat)
 
 
 def _find_keys(path: PathLike) -> set[str]:
