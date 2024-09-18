@@ -31,8 +31,10 @@ class JSONLWriter:
         :return: The current instance.
         """
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        mode = 'ab' if self.append else 'wb'
-        self.file = open(self.path, mode)
+        if self.append:
+            self.file = open(self.path, 'ab')
+        else:
+            self.file = open(self.path, 'wb')
         return self
 
     def write(self, item: Any) -> None:
