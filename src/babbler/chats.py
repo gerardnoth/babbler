@@ -301,7 +301,7 @@ class GoogleChatCompleter(ChatCompleter):
         content = response.candidates[0].content
         text = content.parts[0].text
         return Message(
-            role=content.role,
+            role=Role.assistant,
             content=text,
         )
 
