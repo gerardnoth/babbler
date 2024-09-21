@@ -63,7 +63,7 @@ class ChatAdapter[T](ABC):
     """Converts chats into a format suitable for a model provider."""
 
     @abstractmethod
-    def adapt_fine_tune(self, input_path: PathLike, output_path) -> None:
+    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
         """Adapt a chat file for fine-tuning.
 
         The output file is in a format suitable for the model provider.
