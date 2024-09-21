@@ -1,6 +1,7 @@
 """A module for various application resources."""
 
 from enum import Enum
+from pathlib import Path
 from typing import Self, Iterable
 
 from pydantic import BaseModel
@@ -46,6 +47,7 @@ class JsonModel(BaseModel):
 
         :param path: Path to save to.
         """
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'w', encoding='utf-8') as file:
             file.write(self.model_dump_json())
 
