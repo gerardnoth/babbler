@@ -1,12 +1,43 @@
 """Utilities for working with files."""
 
+import base64
+import hashlib
 from pathlib import Path
-from typing import Iterable, Any, Self, BinaryIO
+from typing import Iterable, Any, Self, BinaryIO, Literal
 
 import orjson
 from pydantic import BaseModel
 
 from babbler.types import PathLike
+
+
+def md5sum(
+    path: PathLike,
+    chunk_size: int = 8192,
+    mode: Literal['hex', 'base64'] = 'hex',
+) -> str:
+    """Calculates the MD5 checksum of a file.
+
+    If the chunk size is greater than 0, the file is read in chunks.
+
+    :param path: A path to a file.
+    :param chunk_size: The size of each chunk.
+    :param mode: How the result should be returned.
+    :return: The checksum.
+    """
+    md5 = hashlib.md5()
+    with open(path, 'rb') as file:
+        if chunk_size > 0:
+            for chunk in iter(lambda: file.read(chunk_size), b''):
+                md5.update(chunk)
+        else:
+            md5.update(file.read())
+    if mode == 'hex':
+        return md5.hexdigest()
+    elif mode == 'base64':
+        return base64.b64encode(md5.digest()).decode('utf-8')
+    else:
+        raise ValueError(f'Unsupported mode: {mode}')
 
 
 class JSONLWriter:
