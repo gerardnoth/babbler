@@ -82,13 +82,20 @@ class ChatAdapter[T](ABC):
         """
         raise NotImplementedError
 
-    def adapt_messages(self, messages: Iterable[Message]) -> list[T]:
+    def adapt_messages(self, messages: Iterable[Message], target: list[T] | None = None) -> list[T]:
         """Adapt messages for a provider.
 
+        If the target list is not set, a new list is created and returned. Otherwise, the target
+        list is appended to and returned.
+
         :param messages: Messages to adapt.
+        :param target: A list to append to.
         :return: Objects in a provider format.
         """
-        return [self.adapt_message(message) for message in messages]
+        result: list[T] = [] if target is None else target
+        for message in messages:
+            result.append(self.adapt_message(message))
+        return result
 
 
 class GoogleAIChatAdapter(ChatAdapter[ContentDict]):
@@ -140,13 +147,14 @@ class OpenAIChatAdapter(ChatAdapter[ChatCompletionMessageParam]):
                 messages: list[ChatCompletionMessageParam] = []
                 if chat.system_message:
                     messages.append(
-                        ChatCompletionSystemMessageParam(
-                            role='system',
-                            content=chat.system_message,
+                        self.adapt_message(
+                            Message(
+                                role=Role.system,
+                                content=chat.system_message,
+                            )
                         )
                     )
-                for message in chat.messages:
-                    messages.append(self.adapt_message(message))
+                self.adapt_messages(chat.messages, target=messages)
                 writer.write({'messages': messages})
 
     @override
@@ -225,8 +233,7 @@ class OpenAiChatCompleter(ChatCompleter):
                     Message(role=Role.system, content=chat.system_message)
                 )
             )
-        for message in chat.messages:
-            messages.append(self.chat_adapter.adapt_message(message))
+        self.chat_adapter.adapt_messages(chat.messages, target=messages)
         model_name = chat.model or self.model
         if model_name is None:
             raise ValueError(
