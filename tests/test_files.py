@@ -24,6 +24,7 @@ def test_read_lines(tmp_path):
 
     assert len(list(files.yield_lines(path, limit=2))) == 2
 
+
 def test_write_read_jsonl(tmp_path):
     path = tmp_path / 'blobs.jsonl'
     count = 3
