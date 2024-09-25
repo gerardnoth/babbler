@@ -33,13 +33,14 @@ class JsonModel(BaseModel):
         return [x for x in cls.yield_from_jsonl(path)]
 
     @classmethod
-    def yield_from_jsonl(cls, path: PathLike) -> Iterable[Self]:
+    def yield_from_jsonl(cls, path: PathLike, limit: int | None = None) -> Iterable[Self]:
         """Yields deserialized instances from a JSONL file.
 
         :param path: Path to a file.
+        :param limit: The maximum number of instances to yield.
         :return: An iterable of instances.
         """
-        for line in babbler.files.yield_lines(path):
+        for line in babbler.files.yield_lines(path, limit=limit):
             yield cls.model_validate_json(line)
 
     def write_json(self, path: PathLike) -> None:

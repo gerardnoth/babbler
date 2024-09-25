@@ -100,15 +100,20 @@ class JSONLWriter:
             self.file = None
 
 
-def yield_lines(path: PathLike) -> Iterable[str]:
+def yield_lines(path: PathLike, limit: int | None = None) -> Iterable[str]:
     """Yield lines as strings from a file.
 
     :param path: A path to a file.
+    :param limit: The maximum the number of lines to yield.
     :return: An iterable of lines.
     """
+    if limit is not None and limit < 1:
+        raise ValueError(f'Limit must be greater than or equal to 1, but got: {limit}')
     with open(path, encoding='utf-8') as file:
-        for line in file:
+        for i, line in enumerate(file):
             yield line
+            if limit is not None and (i + 1) >= limit:
+                break
 
 
 def yield_jsonl(path: PathLike) -> Iterable[Any]:

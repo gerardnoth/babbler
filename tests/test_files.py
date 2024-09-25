@@ -22,6 +22,7 @@ def test_read_lines(tmp_path):
     for i, line in enumerate(lines):
         assert f'{i}\n' == line
 
+    assert len(list(files.yield_lines(path, limit=2))) == 2
 
 def test_write_read_jsonl(tmp_path):
     path = tmp_path / 'blobs.jsonl'
