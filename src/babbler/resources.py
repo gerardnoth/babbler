@@ -58,3 +58,4 @@ class Provider(str, Enum):
 
     google_ai = 'google_ai'
     openai = 'openai'
+    vertexai = 'vertexai'

@@ -12,6 +12,7 @@ import dotenv
 import google.generativeai as genai
 import openai
 import typer
+import vertexai.generative_models
 from google.generativeai.types import ContentDict
 from loguru import logger
 from openai.types.chat import (
@@ -22,7 +23,8 @@ from openai.types.chat import (
 )
 from pydantic import Field
 from tqdm import tqdm
-from typing_extensions import Annotated
+from typing_extensions import Annotated, TypedDict
+
 
 from babbler.files import JSONLWriter
 from babbler.resources import JsonModel, Provider
@@ -96,6 +98,64 @@ class ChatAdapter[T](ABC):
         for message in messages:
             result.append(self.adapt_message(message))
         return result
+
+
+class TextPart(TypedDict):
+    """The text part of a conversation."""
+
+    text: str
+
+
+class Gemini15Message(TypedDict):
+    """A message in a Gemini 1.5 chat."""
+
+    role: str
+    parts: list[TextPart]
+
+
+class Gemini15TuneChat(JsonModel):
+    """A chat in a format for tuning Gemini 1.5 models."""
+
+    # Gemini 1.5 text datasets use camel case.
+    system_instruction: Gemini15Message | None = Field(alias='systemInstruction')
+    contents: list[Gemini15Message]
+
+
+class Gemini15ChatAdapter(ChatAdapter[Gemini15Message]):
+    """Adapts chats for Gemini 1.5 on Google Cloud Platform's Vertex AI."""
+
+    @override
+    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
+        with JSONLWriter(path=output_path) as writer:
+            for chat in Chat.yield_from_jsonl(input_path):
+                messages: list[Gemini15Message] = []
+                system_instruction: Gemini15Message | None = None
+                if chat.system_message:
+                    message = Message(role=Role.system, content=chat.system_message)
+                    system_instruction = self.adapt_message(message)
+                self.adapt_messages(chat.messages, target=messages)
+                tune_chat = Gemini15TuneChat(
+                    systemInstruction=system_instruction,
+                    contents=messages,
+                )
+                writer.write(tune_chat)
+
+    @override
+    def adapt_message(self, message: Message) -> Gemini15Message:
+        role: str
+        match message.role:
+            case Role.assistant:
+                role = 'model'
+            case Role.user:
+                role = 'user'
+            case Role.system:
+                role = 'system'
+            case _:
+                raise ValueError(f'Unsupported role: {message.role}')
+        return Gemini15Message(
+            role=role,
+            parts=[TextPart(text=message.content)],
+        )
 
 
 class GoogleAIChatAdapter(ChatAdapter[ContentDict]):
@@ -331,6 +391,49 @@ class GoogleChatCompleter(ChatCompleter):
         )
 
 
+class Gemini15ChatCompleter(ChatCompleter):
+    """Completes chats with Vertex AI Gemini 1.5 models."""
+
+    def __init__(
+        self,
+        model: str | None = None,
+    ):
+        """Create a new instance.
+
+        :param model: A model to complete chats with. Used if the chat doesn't have a model set.
+        """
+        self.model = model
+        self.chat_adapter = Gemini15ChatAdapter()
+
+    @override
+    def complete(self, chat: Chat) -> Message:
+        model_name = chat.model or self.model
+        if model_name is None:
+            raise ValueError(
+                f'A default model must be set if the chat does not have a model set: {chat}'
+            )
+        model = vertexai.generative_models.GenerativeModel(
+            model_name=model_name,
+            system_instruction=chat.system_message,
+        )
+        generation_config = vertexai.generative_models.GenerationConfig(
+            candidate_count=1,
+            temperature=chat.temperature,
+        )
+        contents = self.chat_adapter.adapt_messages(chat.messages)
+        response = model.generate_content(
+            contents=contents,
+            generation_config=generation_config,
+        )
+        # The candidate count is set to 1, so only 1 is available.
+        content = response.candidates[0].content
+        text = content.parts[0].text
+        return Message(
+            role=Role.assistant,
+            content=text,
+        )
+
+
 def complete(
     input_path: Annotated[
         Path,
@@ -386,6 +489,8 @@ def complete(
         chat_completer = GoogleChatCompleter(model=model)
     elif provider == Provider.openai:
         chat_completer = OpenAiChatCompleter(model=model)
+    elif provider == Provider.vertexai:
+        chat_completer = Gemini15ChatCompleter(model=model)
     else:
         raise ValueError(f'Unsupported provider: {provider}')
     keys: set[str] = set()
