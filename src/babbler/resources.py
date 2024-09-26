@@ -4,7 +4,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Self, Iterable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import babbler
 from babbler.types import PathLike
@@ -59,3 +59,33 @@ class Provider(str, Enum):
     google_ai = 'google_ai'
     openai = 'openai'
     vertexai = 'vertexai'
+
+
+class Role(str, Enum):
+    """The role of an entity in a conversation."""
+
+    assistant = 'assistant'
+    """A role the model adopts."""
+
+    system = 'system'
+    """A role for system instructions."""
+
+    user = 'user'
+    """A role the for entities external to the model, such as a user or agent."""
+
+
+class Message(JsonModel):
+    """A message in a conversation with a generative model."""
+
+    role: Role
+    content: str
+
+
+class Chat(JsonModel):
+    """A conversation with a generative model."""
+
+    key: str | None = None
+    model: str | None = None
+    temperature: float | None = None
+    system_message: str | None = None
+    messages: list[Message] = Field(default_factory=list)

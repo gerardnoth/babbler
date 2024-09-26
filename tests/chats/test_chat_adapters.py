@@ -1,16 +1,6 @@
 import babbler
-from babbler.chats import Chat, GoogleAIChatAdapter, Message, Role, OpenAIChatAdapter
-
-
-def test_read_chats():
-    path = babbler.utils.project_root() / 'test-data/test_chats/chats.jsonl'
-    chats = Chat.from_jsonl(path)
-    assert len(chats) == 2
-    for chat in chats:
-        assert chat.messages
-        for message in chat.messages:
-            assert message.role
-            assert message.content
+from babbler.chats.adapters import GoogleAIChatAdapter, OpenAIChatAdapter
+from babbler.resources import Role, Message, Chat
 
 
 def test_adapt_chat_for_google_ai():

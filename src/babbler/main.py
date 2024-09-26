@@ -12,7 +12,7 @@ typer_app = typer.Typer(
 
 def main() -> None:
     """Create and run the CLI app."""
-    typer_app.command()(babbler.chats.complete)
+    typer_app.command(name='complete')(babbler.chats.complete.complete_file)
     typer_app()
 
 

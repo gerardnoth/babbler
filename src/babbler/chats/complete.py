@@ -1,243 +1,25 @@
-"""Provides classes for completing chats with generative models."""
+"""A module for completing chats with generative models."""
 
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
-from enum import Enum
 from pathlib import Path
-from typing import Optional
-from typing import override
+from typing import override, Optional
 
 import dotenv
-import google.generativeai as genai
-import openai
 import typer
-import vertexai.generative_models
-from google.generativeai.types import ContentDict
-from loguru import logger
-from openai.types.chat import (
-    ChatCompletionMessageParam,
-    ChatCompletionSystemMessageParam,
-    ChatCompletionAssistantMessageParam,
-    ChatCompletionUserMessageParam,
-)
-from pydantic import Field
 from tqdm import tqdm
-from typing_extensions import Annotated, TypedDict
+from typing_extensions import Annotated
 
+import openai
+import vertexai.generative_models
+from google import generativeai as genai
+from loguru import logger
+from openai.types.chat import ChatCompletionMessageParam
 
+from babbler.chats.adapters import OpenAIChatAdapter, GoogleAIChatAdapter, Gemini15ChatAdapter
 from babbler.files import JSONLWriter
-from babbler.resources import JsonModel, Provider
+from babbler.resources import Chat, Message, Role, Provider
 from babbler.types import PathLike
-
-
-class Role(str, Enum):
-    """The role of an entity in a conversation."""
-
-    assistant = 'assistant'
-    """A role the model adopts."""
-
-    system = 'system'
-    """A role for system instructions."""
-
-    user = 'user'
-    """A role the for entities external to the model, such as a user or agent."""
-
-
-class Message(JsonModel):
-    """A message in a conversation with a generative model."""
-
-    role: Role
-    content: str
-
-
-class Chat(JsonModel):
-    """A conversation with a generative model."""
-
-    key: str | None = None
-    model: str | None = None
-    temperature: float | None = None
-    system_message: str | None = None
-    messages: list[Message] = Field(default_factory=list)
-
-
-class ChatAdapter[T](ABC):
-    """Converts chats into a format suitable for a model provider."""
-
-    @abstractmethod
-    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
-        """Adapt a chat file for fine-tuning.
-
-        The output file is in a format suitable for the model provider.
-
-        :param input_path: A path to a chat JSONL file.
-        :param output_path: Path to save the output file.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def adapt_message(self, message: Message) -> T:
-        """Adapt a message for a provider.
-
-        :param message: A message to adapt.
-        :return: An object in a provider format.
-        """
-        raise NotImplementedError
-
-    def adapt_messages(self, messages: Iterable[Message], target: list[T] | None = None) -> list[T]:
-        """Adapt messages for a provider.
-
-        If the target list is not set, a new list is created and returned. Otherwise, the target
-        list is appended to and returned.
-
-        :param messages: Messages to adapt.
-        :param target: A list to append to.
-        :return: Objects in a provider format.
-        """
-        result: list[T] = [] if target is None else target
-        for message in messages:
-            result.append(self.adapt_message(message))
-        return result
-
-
-class TextPart(TypedDict):
-    """The text part of a conversation."""
-
-    text: str
-
-
-class Gemini15Message(TypedDict):
-    """A message in a Gemini 1.5 chat."""
-
-    role: str
-    parts: list[TextPart]
-
-
-class Gemini15TuneChat(JsonModel):
-    """A chat in a format for tuning Gemini 1.5 models."""
-
-    # Gemini 1.5 text datasets use camel case.
-    system_instruction: Gemini15Message | None = Field(alias='systemInstruction')
-    contents: list[Gemini15Message]
-
-
-class Gemini15ChatAdapter(ChatAdapter[Gemini15Message]):
-    """Adapts chats for Gemini 1.5 on Google Cloud Platform's Vertex AI."""
-
-    @override
-    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
-        with JSONLWriter(path=output_path) as writer:
-            for chat in Chat.yield_from_jsonl(input_path):
-                messages: list[Gemini15Message] = []
-                system_instruction: Gemini15Message | None = None
-                if chat.system_message:
-                    message = Message(role=Role.system, content=chat.system_message)
-                    system_instruction = self.adapt_message(message)
-                self.adapt_messages(chat.messages, target=messages)
-                tune_chat = Gemini15TuneChat(
-                    systemInstruction=system_instruction,
-                    contents=messages,
-                )
-                writer.write(tune_chat)
-
-    @override
-    def adapt_message(self, message: Message) -> Gemini15Message:
-        role: str
-        match message.role:
-            case Role.assistant:
-                role = 'model'
-            case Role.user:
-                role = 'user'
-            case Role.system:
-                role = 'system'
-            case _:
-                raise ValueError(f'Unsupported role: {message.role}')
-        return Gemini15Message(
-            role=role,
-            parts=[TextPart(text=message.content)],
-        )
-
-
-class GoogleAIChatAdapter(ChatAdapter[ContentDict]):
-    """Adapts chats for Google AI."""
-
-    @override
-    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
-        with JSONLWriter(path=output_path) as writer:
-            for chat in Chat.yield_from_jsonl(input_path):
-                if chat.system_message:
-                    # TODO system messages are not supported yet.
-                    pass
-                if len(chat.messages) != 2:
-                    raise ValueError(
-                        f'Google AI only supports tuning single turn messages, but got chat: {chat}'
-                    )
-                example = {
-                    'text_input': chat.messages[0].content,
-                    'output': chat.messages[1].content,
-                }
-                writer.write(example)
-
-    @override
-    def adapt_message(self, message: Message) -> ContentDict:
-        role = message.role
-        parts = [message.content]
-        match role:
-            case 'assistant':
-                return ContentDict(
-                    role='model',
-                    parts=parts,
-                )
-            case 'user':
-                return ContentDict(
-                    role='user',
-                    parts=parts,
-                )
-            case _:
-                raise ValueError(f'Unsupported role {role}')
-
-
-class OpenAIChatAdapter(ChatAdapter[ChatCompletionMessageParam]):
-    """Adapts chats for OpenAI."""
-
-    @override
-    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
-        with JSONLWriter(path=output_path) as writer:
-            for chat in Chat.yield_from_jsonl(input_path):
-                messages: list[ChatCompletionMessageParam] = []
-                if chat.system_message:
-                    messages.append(
-                        self.adapt_message(
-                            Message(
-                                role=Role.system,
-                                content=chat.system_message,
-                            )
-                        )
-                    )
-                self.adapt_messages(chat.messages, target=messages)
-                writer.write({'messages': messages})
-
-    @override
-    def adapt_message(self, message: Message) -> ChatCompletionMessageParam:
-        role = message.role
-        match role:
-            case Role.assistant:
-                return ChatCompletionAssistantMessageParam(
-                    role='assistant',
-                    content=message.content,
-                )
-            case Role.system:
-                return ChatCompletionSystemMessageParam(
-                    role='system',
-                    content=message.content,
-                )
-            case Role.user:
-                return ChatCompletionUserMessageParam(
-                    role='user',
-                    content=message.content,
-                )
-            case _:
-                raise ValueError(f'Unsupported role {role}')
 
 
 class ChatCompleter(ABC):
@@ -434,7 +216,7 @@ class Gemini15ChatCompleter(ChatCompleter):
         )
 
 
-def complete(
+def complete_file(
     input_path: Annotated[
         Path,
         typer.Option(
