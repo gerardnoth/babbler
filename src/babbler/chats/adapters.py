@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import Iterable, override
 
+from google.generativeai.types.model_types import TuningExampleDict
 from pydantic import Field
 from typing_extensions import TypedDict
 
@@ -19,19 +20,30 @@ from babbler.resources import Message, Chat, Role, JsonModel
 from babbler.types import PathLike
 
 
-class ChatAdapter[T](ABC):
+class ChatAdapter[S, T](ABC):
     """Converts chats into a format suitable for a model provider."""
 
     @abstractmethod
-    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
+    def adapt_tune(self, chat: Chat) -> S:
+        """Adapt a chat for fine-tuning.
+
+        :param chat: A chat to adapt.
+        :return: An object in the platform's format for fine-tuning.
+        """
+        raise NotImplementedError
+
+    def adapt_file_tune(self, input_path: PathLike, output_path: PathLike) -> None:
         """Adapt a chat file for fine-tuning.
 
-        The output file is in a format suitable for the model provider.
+        Tuning examples are written to a JSONL file in a format suitable for the model provider.
 
         :param input_path: A path to a chat JSONL file.
         :param output_path: Path to save the output file.
         """
-        raise NotImplementedError
+        with JSONLWriter(path=output_path) as writer:
+            for chat in Chat.yield_from_jsonl(input_path):
+                tune_chat = self.adapt_tune(chat=chat)
+                writer.write(tune_chat)
 
     @abstractmethod
     def adapt_message(self, message: Message) -> T:
@@ -58,25 +70,22 @@ class ChatAdapter[T](ABC):
         return result
 
 
-class GoogleAIChatAdapter(ChatAdapter[ContentDict]):
+class GoogleAIChatAdapter(ChatAdapter[TuningExampleDict, ContentDict]):
     """Adapts chats for Google AI."""
 
     @override
-    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
-        with JSONLWriter(path=output_path) as writer:
-            for chat in Chat.yield_from_jsonl(input_path):
-                if chat.system_message:
-                    # TODO system messages are not supported yet.
-                    pass
-                if len(chat.messages) != 2:
-                    raise ValueError(
-                        f'Google AI only supports tuning single turn messages, but got chat: {chat}'
-                    )
-                example = {
-                    'text_input': chat.messages[0].content,
-                    'output': chat.messages[1].content,
-                }
-                writer.write(example)
+    def adapt_tune(self, chat: Chat) -> TuningExampleDict:
+        if chat.system_message:
+            # TODO system messages are not supported yet.
+            pass
+        if len(chat.messages) != 2:
+            raise ValueError(
+                f'Google AI only supports tuning single turn messages, but got chat: {chat}'
+            )
+        return TuningExampleDict(
+            text_input=chat.messages[0].content,
+            output=chat.messages[1].content,
+        )
 
     @override
     def adapt_message(self, message: Message) -> ContentDict:
@@ -97,25 +106,29 @@ class GoogleAIChatAdapter(ChatAdapter[ContentDict]):
                 raise ValueError(f'Unsupported role {role}')
 
 
-class OpenAIChatAdapter(ChatAdapter[ChatCompletionMessageParam]):
+class OpenAIChatTune(JsonModel):
+    """A chat in a format for tuning OpenAI models."""
+
+    messages: list[ChatCompletionMessageParam]
+
+
+class OpenAIChatAdapter(ChatAdapter[OpenAIChatTune, ChatCompletionMessageParam]):
     """Adapts chats for OpenAI."""
 
     @override
-    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
-        with JSONLWriter(path=output_path) as writer:
-            for chat in Chat.yield_from_jsonl(input_path):
-                messages: list[ChatCompletionMessageParam] = []
-                if chat.system_message:
-                    messages.append(
-                        self.adapt_message(
-                            Message(
-                                role=Role.system,
-                                content=chat.system_message,
-                            )
-                        )
+    def adapt_tune(self, chat: Chat) -> OpenAIChatTune:
+        messages: list[ChatCompletionMessageParam] = []
+        if chat.system_message:
+            messages.append(
+                self.adapt_message(
+                    Message(
+                        role=Role.system,
+                        content=chat.system_message,
                     )
-                self.adapt_messages(chat.messages, target=messages)
-                writer.write({'messages': messages})
+                )
+            )
+        self.adapt_messages(chat.messages, target=messages)
+        return OpenAIChatTune(messages=messages)
 
     @override
     def adapt_message(self, message: Message) -> ChatCompletionMessageParam:
@@ -161,24 +174,21 @@ class Gemini15TuneChat(JsonModel):
     contents: list[Gemini15Message]
 
 
-class Gemini15ChatAdapter(ChatAdapter[Gemini15Message]):
+class Gemini15ChatAdapter(ChatAdapter[Gemini15TuneChat, Gemini15Message]):
     """Adapts chats for Gemini 1.5 on Google Cloud Platform's Vertex AI."""
 
     @override
-    def adapt_fine_tune(self, input_path: PathLike, output_path: PathLike) -> None:
-        with JSONLWriter(path=output_path) as writer:
-            for chat in Chat.yield_from_jsonl(input_path):
-                messages: list[Gemini15Message] = []
-                system_instruction: Gemini15Message | None = None
-                if chat.system_message:
-                    message = Message(role=Role.system, content=chat.system_message)
-                    system_instruction = self.adapt_message(message)
-                self.adapt_messages(chat.messages, target=messages)
-                tune_chat = Gemini15TuneChat(
-                    systemInstruction=system_instruction,
-                    contents=messages,
-                )
-                writer.write(tune_chat)
+    def adapt_tune(self, chat: Chat) -> Gemini15TuneChat:
+        messages: list[Gemini15Message] = []
+        system_instruction: Gemini15Message | None = None
+        if chat.system_message:
+            message = Message(role=Role.system, content=chat.system_message)
+            system_instruction = self.adapt_message(message)
+        self.adapt_messages(chat.messages, target=messages)
+        return Gemini15TuneChat(
+            systemInstruction=system_instruction,
+            contents=messages,
+        )
 
     @override
     def adapt_message(self, message: Message) -> Gemini15Message:
