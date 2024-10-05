@@ -86,6 +86,8 @@ class Chat(JsonModel):
 
     key: str | None = None
     model: str | None = None
-    temperature: float | None = None
+    max_tokens: int | None = None
+    seed: int | None = None
     system_message: str | None = None
+    temperature: float | None = None
     messages: list[Message] = Field(default_factory=list)

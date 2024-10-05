@@ -82,10 +82,12 @@ class OpenAiChatCompleter(ChatCompleter):
                 f'A default model must be set if the chat does not have a model set: {chat}'
             )
         chat_completion = self.client.chat.completions.create(
-            model=model_name,
+            max_completion_tokens=chat.max_tokens,
             messages=messages,
-            temperature=chat.temperature,
+            model=model_name,
             n=1,
+            seed=chat.seed,
+            temperature=chat.temperature,
         )
         # Because "n = 1" only one choice is generated.
         choice = chat_completion.choices[0]
@@ -139,6 +141,8 @@ class GoogleChatCompleter(ChatCompleter):
         )
         generation_config = genai.types.GenerationConfig(
             candidate_count=1,
+            max_output_tokens=chat.max_tokens,
+            seed=chat.seed,
             temperature=chat.temperature,
         )
         contents = self.chat_adapter.adapt_messages(chat.messages)
@@ -200,6 +204,8 @@ class Gemini15ChatCompleter(ChatCompleter):
         )
         generation_config = vertexai.generative_models.GenerationConfig(
             candidate_count=1,
+            max_output_tokens=chat.max_tokens,
+            seed=chat.seed,
             temperature=chat.temperature,
         )
         contents = self.chat_adapter.adapt_messages(chat.messages)
